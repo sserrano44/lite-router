@@ -1,0 +1,29 @@
+# Integration-test LiteLLM config: every deployment is a mock_response so no
+# API keys are needed; the response content reveals which model group routed.
+model_list:
+  - model_name: ripio-auto
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: mock-key
+      mock_response: "routed:default-alias"
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: mock-key
+      mock_response: "routed:claude-haiku-4-5"
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: mock-key
+      mock_response: "routed:claude-sonnet-4-6"
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: anthropic/claude-opus-4-8
+      api_key: mock-key
+      mock_response: "routed:claude-opus-4-8"
+
+litellm_settings:
+  callbacks: custom_callbacks.proxy_handler_instance
+
+general_settings:
+  master_key: sk-test-master

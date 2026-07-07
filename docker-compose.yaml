@@ -1,0 +1,89 @@
+# Integration stack: LiteLLM + Redis + Postgres + mock classifier.
+# Usage: docker compose up -d --build && uv run pytest tests/integration
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6390:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  mock-classifier:
+    build: tests/mock_classifier
+    ports:
+      - "127.0.0.1:8891:8891"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8891/healthz')\""]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  litellm:
+    build:
+      context: .
+      dockerfile: deploy/litellm/Dockerfile
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    ports:
+      - "127.0.0.1:4000:4000"
+    environment:
+      ROUTER_ENABLED: "true"
+      SHADOW_MODE: "false"
+      SUBAGENT_ROUTING_ENABLED: "true"
+      ROUTER_REDIS_URL: redis://redis:6379/0
+      ROUTER_CLASSIFIER_URL: http://mock-classifier:8891
+      ROUTER_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      ROUTER_POLICIES_PATH: /app/policies.yaml
+      ROUTER_TIMING_LOG: "true"
+    volumes:
+      - ./tests/integration/litellm_config.yaml:/app/config.yaml:ro
+      - ./deploy/litellm/custom_callbacks.py:/app/custom_callbacks.py:ro
+      - ./policies.yaml:/app/policies.yaml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      mock-classifier:
+        condition: service_healthy
+
+  # Same image in shadow mode on :4001 (separate Redis DB to isolate sessions).
+  litellm-shadow:
+    build:
+      context: .
+      dockerfile: deploy/litellm/Dockerfile
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    ports:
+      - "127.0.0.1:4001:4000"
+    environment:
+      ROUTER_ENABLED: "true"
+      SHADOW_MODE: "true"
+      ROUTER_REDIS_URL: redis://redis:6379/1
+      ROUTER_CLASSIFIER_URL: http://mock-classifier:8891
+      ROUTER_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      ROUTER_POLICIES_PATH: /app/policies.yaml
+    volumes:
+      - ./tests/integration/litellm_config.yaml:/app/config.yaml:ro
+      - ./deploy/litellm/custom_callbacks.py:/app/custom_callbacks.py:ro
+      - ./policies.yaml:/app/policies.yaml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      mock-classifier:
+        condition: service_healthy
