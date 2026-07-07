@@ -1,0 +1,31 @@
+[project]
+name = "lite-router-workspace"
+version = "0.1.0"
+description = "Ripio session-pinned model router (ripio-auto) — workspace root"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+router-common = { workspace = true }
+session-router = { workspace = true }
+classifier-svc = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "fakeredis>=2.25",
+    "httpx>=0.27",
+    "hypothesis>=6.100",
+    "asyncpg>=0.29",
+    "router-common",
+    "session-router",
+    "classifier-svc",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
