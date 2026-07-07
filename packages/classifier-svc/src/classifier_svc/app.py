@@ -23,6 +23,7 @@ logger = logging.getLogger("classifier_svc")
 
 POLICIES_PATH = os.environ.get("ROUTER_POLICIES_PATH", "policies.yaml")
 RELOAD_WATCH_INTERVAL_S = 5.0
+WARMUP_TIMEOUT_S = float(os.environ.get("OLLAMA_WARMUP_TIMEOUT_S", "300"))
 
 
 class ClassifyRequest(BaseModel):
@@ -61,6 +62,7 @@ async def _warmup() -> None:
         prompt.system_prompt(state.policies),
         prompt.user_prompt("warmup: explain this regex", "", {}),
         prompt.response_schema(state.policies),
+        timeout_s=WARMUP_TIMEOUT_S,
     )
     if result is None:
         raise RuntimeError("warmup classification against Ollama failed")

@@ -13,6 +13,10 @@ logger = logging.getLogger("classifier_svc")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 CLASSIFIER_MODEL = os.environ.get("CLASSIFIER_MODEL", "qwen3-coder:30b")
 OLLAMA_TIMEOUT_S = float(os.environ.get("OLLAMA_TIMEOUT_S", "10"))
+# "json": free-form JSON, enum enforced by prompt + code validation (~2x
+# faster: schema-constrained decoding recompiles a grammar per request).
+# "schema": hard-constrained decoding via structured outputs.
+OLLAMA_FORMAT_MODE = os.environ.get("OLLAMA_FORMAT_MODE", "json")
 
 _client: httpx.AsyncClient | None = None
 
@@ -24,13 +28,19 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
-async def chat_classify(system: str, user: str, schema: dict) -> dict | None:
-    """Return parsed {policy_name, confidence} or None on any failure."""
+async def chat_classify(
+    system: str, user: str, schema: dict, timeout_s: float | None = None
+) -> dict | None:
+    """Return parsed {policy_name, confidence} or None on any failure.
+
+    timeout_s overrides the default request timeout — the warmup call uses a
+    long one because a cold model load into VRAM can take minutes.
+    """
     payload = {
         "model": CLASSIFIER_MODEL,
         "stream": False,
         "keep_alive": -1,
-        "format": schema,
+        "format": schema if OLLAMA_FORMAT_MODE == "schema" else "json",
         "options": {"temperature": 0, "num_predict": 64},
         "messages": [
             {"role": "system", "content": system},
@@ -38,7 +48,10 @@ async def chat_classify(system: str, user: str, schema: dict) -> dict | None:
         ],
     }
     try:
-        resp = await _get_client().post(f"{OLLAMA_URL}/api/chat", json=payload)
+        resp = await _get_client().post(
+            f"{OLLAMA_URL}/api/chat", json=payload,
+            timeout=timeout_s if timeout_s is not None else OLLAMA_TIMEOUT_S,
+        )
         resp.raise_for_status()
         content = resp.json().get("message", {}).get("content", "")
         return json.loads(content)
