@@ -1,0 +1,24 @@
+# systemd user unit for classifier-svc on the RTX 3090 box.
+# Install: cp to ~/.config/systemd/user/ && systemctl --user daemon-reload
+#          systemctl --user enable --now classifier-svc
+[Unit]
+Description=ripio-auto classifier service (Ollama qwen3-coder)
+After=ollama.service
+Wants=ollama.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/lite-router
+Environment=ROUTER_POLICIES_PATH=%h/lite-router/policies.yaml
+Environment=OLLAMA_URL=http://127.0.0.1:11434
+Environment=CLASSIFIER_MODEL=qwen3-coder:30b
+Environment=OLLAMA_FORMAT_MODE=json
+Environment=OLLAMA_WARMUP_TIMEOUT_S=300
+Environment=HOST=0.0.0.0
+Environment=PORT=8891
+ExecStart=%h/.local/bin/uv run --project %h/lite-router classifier-svc
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

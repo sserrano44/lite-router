@@ -1,0 +1,37 @@
+# Production-shaped LiteLLM config for the ripio-auto session router.
+# Deploy next to custom_callbacks.py and policies.yaml (see deploy/RUNBOOK.md).
+model_list:
+  # Virtual model: keeps auth/model checks happy and doubles as the plain
+  # alias when ROUTER_ENABLED=false (hook returns None -> this deployment).
+  - model_name: ripio-auto
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: anthropic/claude-opus-4-8
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+litellm_settings:
+  callbacks: custom_callbacks.proxy_handler_instance
+
+router_settings:
+  num_retries: 2
+  # IMPORTANT: fallbacks must never go DOWN a tier — a rewritten model behaves
+  # like a client-sent group, so a haiku fallback on the opus group would
+  # silently violate the router's no-downgrade invariant.
+  fallbacks:
+    - claude-haiku-4-5: ["claude-sonnet-4-6"]
+    - claude-sonnet-4-6: ["claude-opus-4-8"]
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
