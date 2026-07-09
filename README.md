@@ -1,9 +1,13 @@
 # lite-router
 
-Ripio session-pinned model router (`ripio-auto`): a LiteLLM proxy hook that
-classifies each new Claude Code session once, pins a model
-(Haiku → Sonnet → Opus) for the session's lifetime, escalates one tier on
-explicit failure signals, and logs every decision for a future learned router.
+A session-pinned model router for [LiteLLM](https://github.com/BerriAI/litellm).
+It's a pre-call hook that classifies each new Claude Code (or any Anthropic
+Messages) session **once**, pins a model tier (Haiku → Sonnet → Opus) for the
+session's lifetime, escalates one tier on explicit failure signals, and logs
+every decision for a future learned router.
+
+You expose a single virtual model — `auto` — to your clients. The router
+decides, per session, which real model actually serves the traffic.
 
 Why session pinning: agent turns mostly replay context, and prompt-cache reads
 are ~10x cheaper than fresh input tokens — per-request routing destroys the
@@ -14,12 +18,90 @@ cache. Classify once, pin, never silently change model mid-session.
 ```
 packages/router-common/    shared policy models, hashing, event types (pydantic+pyyaml only)
 packages/session-router/   the LiteLLM pre-call hook (Redis pinning, escalation, logging)
-packages/classifier-svc/   FastAPI wrapper around Ollama qwen3-coder:30b
-policies.yaml              tiers, path overrides, escalation rules — PR to change
+packages/classifier-svc/   FastAPI wrapper around an Ollama model (default: qwen3-coder:30b)
+policies.yaml              tiers, path overrides, escalation rules — edit to fit your models
 migrations/ + scripts/     Postgres schema, migrate/replay/load-test/purge tools
 deploy/                    LiteLLM Dockerfile+config, GPU-box systemd units, RUNBOOK.md
 tests/                     unit (pure core), integration (docker-compose), mock classifier
 ```
+
+## Install on an existing LiteLLM proxy
+
+The router ships as two Python packages plus a callbacks module. To add it to a
+LiteLLM proxy you already run:
+
+**1. Install the packages into the LiteLLM environment.**
+
+```bash
+pip install ./packages/router-common ./packages/session-router
+```
+
+If you run LiteLLM in Docker, build the bundled image instead — it installs
+both packages into the proxy's venv:
+
+```bash
+docker build -f deploy/litellm/Dockerfile -t litellm-router .
+```
+
+**2. Register the callback.** Drop a `custom_callbacks.py` next to your config
+(one is provided in `deploy/litellm/`):
+
+```python
+from session_router.hook import RipioAutoRouter
+
+proxy_handler_instance = RipioAutoRouter()
+```
+
+**3. Wire it into `litellm_config.yaml`** — a virtual model that the hook
+routes, the real models it can route to, and the callback:
+
+```yaml
+model_list:
+  # Virtual model clients ask for. When ROUTER_ENABLED=false the hook is a
+  # no-op and this becomes a plain alias for its litellm_params model.
+  - model_name: auto
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: claude-haiku-4-5
+    litellm_params: { model: anthropic/claude-haiku-4-5, api_key: os.environ/ANTHROPIC_API_KEY }
+  - model_name: claude-sonnet-4-6
+    litellm_params: { model: anthropic/claude-sonnet-4-6, api_key: os.environ/ANTHROPIC_API_KEY }
+  - model_name: claude-opus-4-8
+    litellm_params: { model: anthropic/claude-opus-4-8, api_key: os.environ/ANTHROPIC_API_KEY }
+
+litellm_settings:
+  callbacks: custom_callbacks.proxy_handler_instance
+
+router_settings:
+  # Fallbacks must never go DOWN a tier — that would violate the
+  # no-downgrade invariant. Only ever fall back upward.
+  fallbacks:
+    - claude-haiku-4-5: ["claude-sonnet-4-6"]
+    - claude-sonnet-4-6: ["claude-opus-4-8"]
+```
+
+The virtual model name (`auto` above, `ripio-auto` in the reference config in
+`deploy/litellm/`) is arbitrary — pick whatever your clients should request.
+The real model names must match the `tiers` in `policies.yaml`.
+
+**4. Point the hook at its dependencies** via environment variables:
+
+| Var | Example | Notes |
+|---|---|---|
+| `ROUTER_ENABLED` | `true` | `false` = full bypass: the virtual model becomes a plain alias, no routing/logging |
+| `SHADOW_MODE` | `true` | classify/pin/log everything, but always route the default model (safe rollout) |
+| `ROUTER_REDIS_URL` | `redis://localhost:6379/0` | session pin store; engine ≥ 6.2 preferred (GETEX) |
+| `ROUTER_CLASSIFIER_URL` | `http://gpu-box:8891` | the classifier service (see below) |
+| `ROUTER_DATABASE_URL` | `postgresql://...` | decision logging; empty string disables it |
+| `ROUTER_POLICIES_PATH` | `/app/policies.yaml` | hot-reloaded on mtime change |
+
+See `deploy/RUNBOOK.md` for the full variable list, rollout, and rollback.
+
+The classifier is optional-but-recommended: it's a small FastAPI service
+(`packages/classifier-svc`) that wraps a local Ollama model. Without it the
+router still pins sessions — it just falls back to the default tier for the
+first request. Run it with `uv run classifier-svc` (see below).
 
 ## Development
 
@@ -36,7 +118,8 @@ uv run classifier-svc                     # real classifier against local Ollama
 uv run scripts/load_test.py               # pinned-path overhead check
 ```
 
-Try it with a real Claude Code client:
+Try it with a real Claude Code client (the dev stack registers the virtual
+model as `ripio-auto`):
 
 ```bash
 ANTHROPIC_BASE_URL=http://127.0.0.1:4000 ANTHROPIC_AUTH_TOKEN=sk-test-master \
@@ -49,9 +132,9 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:4000 ANTHROPIC_AUTH_TOKEN=sk-test-master \
 1. **Session key**: `X-Claude-Code-Session-Id` header (verified to survive the
    proxy path); fallback `sha256(key + system + first message)[:16]` for other
    clients. Records live in Redis, sliding 8h TTL.
-2. **First request**: mission-critical repos (`capyfi`, `contracts`, `bridge`,
-   `custody`, ... — see `policies.yaml`) force-pin Opus with no classifier
-   call; otherwise `classifier-svc` picks a tier (once, ~500ms, 1s timeout).
+2. **First request**: repos flagged in `path_overrides` (see `policies.yaml`)
+   force-pin the top tier with no classifier call; otherwise `classifier-svc`
+   picks a tier (once, ~500ms, 1s timeout).
 3. **Pinned requests**: same model for the whole session; the hook adds
    ~0.2ms. No downgrades, ever.
 4. **Escalation**: one tier up (sticky, max 2) on user retry phrases, two
@@ -60,11 +143,20 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:4000 ANTHROPIC_AUTH_TOKEN=sk-test-master \
 6. **Fail-open**: Redis down, classifier down, any hook bug → default model
    (Sonnet). The gateway never fails because of the router.
 
-Shadow mode (`SHADOW_MODE=true`, the launch default) runs everything — 
-classification, pinning, escalation, logging — but always routes the default
-model. See `deploy/RUNBOOK.md` for rollout, rollback, and client setup.
+Shadow mode (`SHADOW_MODE=true`, the recommended launch default) runs
+everything — classification, pinning, escalation, logging — but always routes
+the default model. See `deploy/RUNBOOK.md` for rollout, rollback, and client
+setup.
 
-## Measured (this box, RTX 3090)
+## Configuring policies
+
+Everything routing-specific lives in `policies.yaml`: the tier→model mapping,
+which repo-path patterns force the top tier, the escalation retry phrases and
+failure markers, session TTL, and per-model pricing (used only for spend
+projection in `scripts/replay_shadow.py`). Edit it to match your own model
+lineup and sensitivity rules — no code changes needed, and it hot-reloads.
+
+## Measured (RTX 3090, qwen3-coder:30b classifier)
 
 - Classifier tier agreement: 51/51 on a hand-labeled prompt set; p50 507ms /
   p95 568ms (`OLLAMA_FORMAT_MODE=json`; schema-constrained mode ~2x slower).
@@ -72,3 +164,4 @@ model. See `deploy/RUNBOOK.md` for rollout, rollback, and client setup.
 - Full integration: 12 scenarios incl. escalation ratchet+cap, path override,
   classifier timeout, Redis outage, 20-way classification race, shadow mode,
   subagent tier-down (R1b, flag-off by default).
+```

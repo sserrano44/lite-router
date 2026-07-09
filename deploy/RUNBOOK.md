@@ -1,16 +1,20 @@
-# ripio-auto Router — Deploy & Operations Runbook
+# lite-router — Deploy & Operations Runbook
+
+This runbook describes a reference deployment: the LiteLLM proxy on a gateway
+host, the classifier on a GPU box next to Ollama. The virtual model is named
+`ripio-auto` here — rename it to whatever your clients request.
 
 ## Components
 
 | Unit | Where | What |
 |---|---|---|
-| LiteLLM proxy + `session_router` hook | AWS gateway | Routes `ripio-auto`, pins sessions in Redis, logs to Postgres |
-| `classifier-svc` | RTX 3090 box (next to Ollama) | `POST /classify` via qwen3-coder:30b, once per session |
+| LiteLLM proxy + `session_router` hook | Gateway host | Routes the virtual model, pins sessions in Redis, logs to Postgres |
+| `classifier-svc` | GPU box (next to Ollama) | `POST /classify` via qwen3-coder:30b, once per session |
 | `policies.yaml` | this repo, mounted into both | Tiers, path overrides, escalation rules — change via PR |
 
-## Deploying the hook (AWS)
+## Deploying the hook (gateway host)
 
-1. Build the image: `docker build -f deploy/litellm/Dockerfile -t litellm-ripio .`
+1. Build the image: `docker build -f deploy/litellm/Dockerfile -t litellm-router .`
    (installs `router-common` + `session-router` into the LiteLLM venv).
 2. Mount/COPY next to each other in `/app`: `litellm_config.yaml` (as
    `config.yaml`), `custom_callbacks.py`, `policies.yaml`.
@@ -18,7 +22,7 @@
 
    | Var | Shadow launch | Notes |
    |---|---|---|
-   | `ROUTER_ENABLED` | `true` | `false` = full rollback: `ripio-auto` becomes a plain Sonnet alias, zero routing, zero logging |
+   | `ROUTER_ENABLED` | `true` | `false` = full rollback: the virtual model becomes a plain Sonnet alias, zero routing, zero logging |
    | `SHADOW_MODE` | `true` | classify/pin/log everything, but always route the default model. Flip to `false` for Phase 2 |
    | `SUBAGENT_ROUTING_ENABLED` | `false` | R1b tier-below-parent routing; leave off until shadow data sizes the win |
    | `ROUTER_REDIS_URL` | `redis://<elasticache>:6379/0` | engine >= 6.2 preferred (GETEX); < 6.2 works via GET+EXPIRE fallback |
@@ -40,7 +44,7 @@ systemctl --user daemon-reload && systemctl --user enable --now classifier-svc
 curl http://127.0.0.1:8891/healthz   # 503 while warming, 200 when the model is in VRAM
 ```
 
-Health monitoring: poll `/healthz` from the AWS side -> Slack alert. An outage
+Health monitoring: poll `/healthz` from the gateway side -> alert. An outage
 is invisible to users (hook times out at 1s and pins the default model) but
 must be visible in Metabase: watch the `fallback` event rate.
 
@@ -66,7 +70,7 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5"
 
 | Symptom | Action |
 |---|---|
-| Anything router-related broken | `ROUTER_ENABLED=false`, restart proxy — `ripio-auto` = Sonnet alias |
+| Anything router-related broken | `ROUTER_ENABLED=false`, restart proxy — virtual model = Sonnet alias |
 | Routing quality bad, keep data | `SHADOW_MODE=true`, restart proxy |
 | Classifier down | Nothing to do (fail-open); fix the GPU box, watch `fallback` rate |
 | Redis down | Sessions fail open to Sonnet; no restart needed |
