@@ -18,14 +18,14 @@ def session_id() -> str:
     return f"it-{uuid.uuid4().hex[:12]}"
 
 
-def messages_payload(messages, model="ripio-auto", system=None):
+def messages_payload(messages, model="lite-auto", system=None):
     body = {"model": model, "max_tokens": 50, "messages": messages}
     if system is not None:
         body["system"] = system
     return body
 
 
-async def send(client, session, messages, model="ripio-auto", system=None, headers=None):
+async def send(client, session, messages, model="lite-auto", system=None, headers=None):
     hdrs = {"Authorization": f"Bearer {MASTER_KEY}"}
     if session:
         hdrs["x-claude-code-session-id"] = session
@@ -40,6 +40,38 @@ async def send(client, session, messages, model="ripio-auto", system=None, heade
 def routed_model(response_json) -> str:
     """mock_response content encodes which deployment served the request."""
     text = response_json["content"][0]["text"]
+    assert text.startswith("routed:"), text
+    return text.removeprefix("routed:")
+
+
+async def send_openai(
+    client, session, messages, model="lite-auto", system=None,
+    headers=None, user_agent="opencode/0.3.0",
+):
+    """OpenCode-style request: OpenAI /chat/completions, system as messages[0].
+
+    Passing session=None sends no session header, so the router pins by the
+    content-hash fallback (the only mechanism OpenCode has).
+    """
+    hdrs = {"Authorization": f"Bearer {MASTER_KEY}"}
+    if user_agent:
+        hdrs["user-agent"] = user_agent
+    if session:
+        hdrs["x-session-id"] = session
+    hdrs.update(headers or {})
+    msgs = list(messages)
+    if system is not None:
+        msgs = [{"role": "system", "content": system}] + msgs
+    resp = await client.post(
+        "/chat/completions", json={"model": model, "max_tokens": 50, "messages": msgs},
+        headers=hdrs,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def routed_model_openai(response_json) -> str:
+    text = response_json["choices"][0]["message"]["content"]
     assert text.startswith("routed:"), text
     return text.removeprefix("routed:")
 
@@ -63,6 +95,26 @@ def failing_history(n_failures, salt=""):
     for i in range(n_failures):
         msgs.append(assistant())
         msgs.append(tool_failure(f"FAILED run {i} {salt}"))
+    return msgs
+
+
+def oai_assistant_toolcall():
+    return {"role": "assistant", "content": None, "tool_calls": [
+        {"id": "t1", "type": "function",
+         "function": {"name": "bash", "arguments": "{}"}}
+    ]}
+
+
+def oai_tool_failure(text="FAILED tests/test_x.py :: 3 failed"):
+    return {"role": "tool", "tool_call_id": "t1", "content": text}
+
+
+def openai_failing_history(n_failures, first="run the test suite", salt=""):
+    """OpenAI-shape failing history: role=tool result messages."""
+    msgs = [user(f"{first} {salt}")]
+    for i in range(n_failures):
+        msgs.append(oai_assistant_toolcall())
+        msgs.append(oai_tool_failure(f"FAILED run {i} {salt}"))
     return msgs
 
 

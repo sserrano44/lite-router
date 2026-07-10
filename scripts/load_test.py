@@ -93,8 +93,8 @@ async def main() -> None:
                            args.concurrency)
     b = stats("bypass", bypass)
 
-    print(f"\n== routed path (ripio-auto, pinned requests) ==")
-    routed = await measure(args.url, "ripio-auto", args.sessions, args.requests,
+    print(f"\n== routed path (lite-auto, pinned requests) ==")
+    routed = await measure(args.url, "lite-auto", args.sessions, args.requests,
                            args.concurrency)
     r = stats("routed", routed)
 

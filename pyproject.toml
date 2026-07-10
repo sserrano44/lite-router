@@ -1,7 +1,7 @@
 [project]
 name = "lite-router-workspace"
 version = "0.1.0"
-description = "Ripio session-pinned model router (ripio-auto) — workspace root"
+description = "Lite session-pinned model router (lite-auto) — workspace root"
 requires-python = ">=3.11"
 dependencies = []
 

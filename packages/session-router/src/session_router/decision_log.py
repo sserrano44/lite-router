@@ -16,7 +16,7 @@ from router_common.events import DecisionEvent
 from session_router import config
 from session_router.config import rate_limited
 
-logger = logging.getLogger("ripio_router")
+logger = logging.getLogger("lite_router")
 
 QUEUE_MAX = 10_000
 BATCH_MAX = 200
@@ -26,8 +26,8 @@ BACKOFF_MAX_S = 30.0
 _DECISIONS_SQL = """
 INSERT INTO router_decisions
   (session_key, event_type, policy_name, model, confidence,
-   first_message_hash, api_key_alias, latency_ms, shadow, agent_id, detail)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+   first_message_hash, api_key_alias, latency_ms, shadow, agent_id, client, detail)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
 """
 
 _FIRST_MESSAGES_SQL = """
@@ -121,6 +121,7 @@ class DecisionLog:
                 ev.latency_ms,
                 ev.shadow,
                 ev.agent_id,
+                ev.client,
                 json.dumps(ev.detail or {}),
             )
             for ev in batch

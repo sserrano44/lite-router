@@ -11,6 +11,22 @@ AGENT_HEADER = "x-claude-code-agent-id"
 PARENT_AGENT_HEADER = "x-claude-code-parent-agent-id"
 ESCALATE_HEADER = "x-router-escalate"
 
+# Session-id headers consulted in priority order. Claude Code sends the first;
+# any client (e.g. via a proxy/gateway) can send the generic x-session-id.
+# The hook overrides this with config.ROUTER_SESSION_HEADERS.
+DEFAULT_SESSION_HEADERS = ("x-claude-code-session-id", "x-session-id")
+
+
+def session_id_from_headers(
+    headers: dict[str, str], session_headers: tuple[str, ...] = DEFAULT_SESSION_HEADERS
+) -> str:
+    """First non-empty session-id header value, in priority order ("" if none)."""
+    for name in session_headers:
+        value = headers.get(name, "").strip()
+        if value:
+            return value
+    return ""
+
 
 def extract_headers(data: dict) -> dict[str, str]:
     """Merge headers from every location LiteLLM may put them, lowercased.
@@ -64,12 +80,29 @@ def first_user_message_text(data: dict, limit: int = 4000) -> str:
 
 
 def system_text(data: dict, limit: int = 8000) -> str:
-    return flatten_content(data.get("system") or "", limit)
+    """System-prompt text across request shapes.
+
+    Anthropic /v1/messages carries it in the top-level `system` field; OpenAI
+    /chat/completions carries it as the first message with role=="system".
+    Top-level wins when present (keeps Anthropic behavior byte-for-byte).
+    """
+    top = data.get("system")
+    if top:
+        return flatten_content(top, limit)
+    for msg in data.get("messages") or []:
+        if isinstance(msg, dict) and msg.get("role") == "system":
+            return flatten_content(msg.get("content"), limit)
+    return ""
 
 
-def derive_session_key(data: dict, headers: dict[str, str], api_key_alias: str) -> tuple[str, str]:
+def derive_session_key(
+    data: dict,
+    headers: dict[str, str],
+    api_key_alias: str,
+    session_headers: tuple[str, ...] = DEFAULT_SESSION_HEADERS,
+) -> tuple[str, str]:
     """Return (session_key, source) where source is "header" or "derived"."""
-    header_key = headers.get(SESSION_HEADER, "").strip()
+    header_key = session_id_from_headers(headers, session_headers)
     if header_key:
         return header_key, "header"
     key = derive_fallback_session_key(

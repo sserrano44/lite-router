@@ -4,6 +4,6 @@
       callbacks: custom_callbacks.proxy_handler_instance
 """
 
-from session_router.hook import RipioAutoRouter
+from session_router.hook import LiteAutoRouter
 
-proxy_handler_instance = RipioAutoRouter()
+proxy_handler_instance = LiteAutoRouter()

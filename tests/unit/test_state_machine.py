@@ -83,7 +83,7 @@ def test_tier_monotonic_non_decreasing(escalation_attempts, start_tier):
     from router_common.policies import load_policies
 
     repo_root = Path(__file__).resolve().parent.parent.parent
-    policies = load_policies(repo_root / "policies.yaml")
+    policies = load_policies(repo_root / "tests" / "fixtures" / "policies.yaml")
     tier = policies.tier_by_name(start_tier)
     rec = sm.build_pin_record(
         policies, classify=sm.ClassifyResult(tier.name, tier.model, 1.0),

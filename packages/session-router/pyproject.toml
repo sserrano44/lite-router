@@ -1,7 +1,7 @@
 [project]
 name = "session-router"
 version = "0.1.0"
-description = "LiteLLM pre-call hook: session-pinned model routing for ripio-auto"
+description = "LiteLLM pre-call hook: session-pinned model routing for lite-auto"
 requires-python = ">=3.11"
 dependencies = [
     "router-common",

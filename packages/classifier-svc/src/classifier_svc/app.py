@@ -100,7 +100,7 @@ async def lifespan(app: FastAPI):
     await ollama.aclose()
 
 
-app = FastAPI(title="ripio-auto classifier-svc", lifespan=lifespan)
+app = FastAPI(title="lite-auto classifier-svc", lifespan=lifespan)
 
 
 @app.get("/healthz")

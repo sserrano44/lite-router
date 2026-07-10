@@ -1,4 +1,4 @@
-"""RipioAutoRouter — LiteLLM pre-call hook implementing session-pinned routing.
+"""LiteAutoRouter — LiteLLM pre-call hook implementing session-pinned routing.
 
 Contract with the proxy (verified against LiteLLM source):
 - `async_pre_call_hook` must be defined directly on this class (the proxy
@@ -23,17 +23,24 @@ except ImportError:  # pragma: no cover
 
 from router_common.events import DecisionEvent, EventType
 
-from session_router import config, escalation, overrides, session_key as sk, state_machine as sm
+from session_router import (
+    client as client_mod,
+    config,
+    escalation,
+    overrides,
+    session_key as sk,
+    state_machine as sm,
+)
 from session_router.classifier_client import ClassifierClient
 from session_router.decision_log import DecisionLog
 from session_router.session_store import SessionStore
 
-logger = logging.getLogger("ripio_router")
+logger = logging.getLogger("lite_router")
 
 ROUTABLE_CALL_TYPES = ("anthropic_messages", "acompletion", "completion")
 
 
-class RipioAutoRouter(CustomLogger):
+class LiteAutoRouter(CustomLogger):
     def __init__(
         self,
         store: SessionStore | None = None,
@@ -74,12 +81,13 @@ class RipioAutoRouter(CustomLogger):
             return None
         model = data.get("model")
         headers = sk.extract_headers(data)
+        client = client_mod.detect_client(headers, call_type)
 
         if model != config.ROUTER_VIRTUAL_MODEL:
-            self._maybe_log_override(model, headers)
+            self._maybe_log_override(model, headers, client)
             return None
         if not config.ROUTER_ENABLED:
-            return None  # model_list alias maps ripio-auto -> default deployment
+            return None  # model_list alias maps lite-auto -> default deployment
 
         t0 = time.perf_counter()
         policies = config.policies_holder.get()
@@ -88,7 +96,9 @@ class RipioAutoRouter(CustomLogger):
             or getattr(user_api_key_dict, "user_id", None)
             or "unknown"
         )
-        base_key, key_source = sk.derive_session_key(data, headers, api_key_alias)
+        base_key, key_source = sk.derive_session_key(
+            data, headers, api_key_alias, config.ROUTER_SESSION_HEADERS
+        )
         agent_id, parent_agent_id = sk.extract_agent_ids(headers)
         is_subagent = parent_agent_id is not None
         subagent_routing = config.SUBAGENT_ROUTING_ENABLED and is_subagent
@@ -101,14 +111,15 @@ class RipioAutoRouter(CustomLogger):
 
         if record and record.get("state") == sm.STATE_PINNED:
             decided_model = await self._handle_pinned(
-                key, record, messages, headers, policies, event_agent_id, api_key_alias
+                key, record, messages, headers, policies, event_agent_id,
+                api_key_alias, client,
             )
         elif record:  # "classifying" placeholder — another request won the race
             decided_model = policies.default_model
         else:
             decided_model = await self._handle_first_request(
                 key, data, headers, policies, api_key_alias, msg_count,
-                subagent_routing, base_key, event_agent_id,
+                subagent_routing, base_key, event_agent_id, client,
             )
 
         stash = {
@@ -122,7 +133,7 @@ class RipioAutoRouter(CustomLogger):
             meta = data.setdefault("metadata", {}) if not isinstance(
                 data.get("metadata"), dict
             ) else data["metadata"]
-        meta["ripio_router"] = stash
+        meta["lite_router"] = stash
 
         data["model"] = policies.default_model if config.SHADOW_MODE else decided_model
         if config.ROUTER_TIMING_LOG:
@@ -133,7 +144,8 @@ class RipioAutoRouter(CustomLogger):
         return data
 
     async def _handle_pinned(
-        self, key, record, messages, headers, policies, event_agent_id, api_key_alias
+        self, key, record, messages, headers, policies, event_agent_id,
+        api_key_alias, client,
     ) -> str:
         scan = escalation.ScanState.from_dict(record.get("scan"))
         signal, new_scan = escalation.detect(messages, headers, scan, policies.escalation)
@@ -152,6 +164,7 @@ class RipioAutoRouter(CustomLogger):
                     api_key_alias=api_key_alias,
                     shadow=config.SHADOW_MODE,
                     agent_id=event_agent_id,
+                    client=client,
                     detail={"reason": signal.reason, **signal.detail,
                             "from_model": record["model"],
                             "escalations": escalated["escalations"]},
@@ -166,7 +179,7 @@ class RipioAutoRouter(CustomLogger):
 
     async def _handle_first_request(
         self, key, data, headers, policies, api_key_alias, msg_count,
-        subagent_routing, base_key, event_agent_id,
+        subagent_routing, base_key, event_agent_id, client,
     ) -> str:
         claimed = await self.store.claim_for_classification(
             key, sm.classifying_placeholder(policies)
@@ -199,11 +212,17 @@ class RipioAutoRouter(CustomLogger):
                 session_key=key, event_type=EventType.PINNED, model=record["model"],
                 policy_name=record["policy_name"], first_message_hash=fmh,
                 api_key_alias=api_key_alias, shadow=shadow, agent_id=event_agent_id,
-                detail={"subagent": True, "parent_key": base_key},
+                client=client, detail={"subagent": True, "parent_key": base_key},
             ))
             return record["model"]
 
-        hints = overrides.extract_repo_hints(system)
+        # Repo-hint auto-detection parses Claude Code's system-prompt env block;
+        # other clients get the header-only override path (empty hints).
+        hints = (
+            overrides.extract_repo_hints(system)
+            if client == client_mod.CLIENT_CLAUDE_CODE
+            else overrides.RepoHints()
+        )
         matched = overrides.match_path_override(hints, headers, policies)
         classify = None
         classify_latency = None
@@ -227,7 +246,7 @@ class RipioAutoRouter(CustomLogger):
                 model=record["model"], policy_name=record["policy_name"],
                 confidence=record["confidence"], first_message_hash=fmh,
                 api_key_alias=api_key_alias, latency_ms=classify_latency,
-                shadow=shadow, agent_id=event_agent_id,
+                shadow=shadow, agent_id=event_agent_id, client=client,
                 detail={} if classify else {"reason": "classifier_unavailable"},
                 raw_first_message=(
                     first_msg[:4000] if config.CAPTURE_FIRST_MESSAGES and first_msg else None
@@ -238,16 +257,16 @@ class RipioAutoRouter(CustomLogger):
             session_key=key, event_type=EventType.PINNED, model=record["model"],
             policy_name=record["policy_name"], confidence=record["confidence"],
             first_message_hash=fmh, api_key_alias=api_key_alias,
-            shadow=shadow, agent_id=event_agent_id,
+            shadow=shadow, agent_id=event_agent_id, client=client,
             detail={"path_override": matched} if matched else {},
         ))
         return record["model"]
 
-    def _maybe_log_override(self, model, headers: dict[str, str]) -> None:
+    def _maybe_log_override(self, model, headers: dict[str, str], client: str) -> None:
         """R11: concrete model name bypasses the router; log once per session+model."""
         if not isinstance(model, str) or not model:
             return
-        session_id = headers.get(sk.SESSION_HEADER, "").strip()
+        session_id = sk.session_id_from_headers(headers, config.ROUTER_SESSION_HEADERS)
         if not session_id:
             return  # session not resolvable — skip (cheap path for curl etc.)
         dedupe_key = (session_id, model)
@@ -258,8 +277,9 @@ class RipioAutoRouter(CustomLogger):
             self._override_seen.popitem(last=False)
         self.decision_log.emit(DecisionEvent(
             session_key=session_id, event_type=EventType.OVERRIDE, model=model,
-            shadow=config.SHADOW_MODE, detail={"requested_model": model},
+            shadow=config.SHADOW_MODE, client=client,
+            detail={"requested_model": model},
         ))
 
 
-proxy_handler_instance = RipioAutoRouter()
+proxy_handler_instance = LiteAutoRouter()

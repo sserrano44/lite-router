@@ -82,6 +82,26 @@ def _block_failed(block: dict, failure_re: re.Pattern) -> bool:
     return bool(text and failure_re.search(text))
 
 
+def _tool_result_failures(msg: dict, failure_re: re.Pattern) -> list[bool] | None:
+    """Per-tool-result failure flags for a tool turn, or None if not one.
+
+    Anthropic shape: a role=="user" message carrying tool_result blocks (each
+    may set is_error or contain a failure marker). OpenAI shape: a role=="tool"
+    message whose string content matches a failure marker (no is_error flag).
+    Returning None means "not a tool turn" so the failure streak is untouched.
+    """
+    role = msg.get("role")
+    if role == "user":
+        blocks = _tool_result_blocks(msg)
+        if blocks:
+            return [_block_failed(b, failure_re) for b in blocks]
+        return None
+    if role == "tool":
+        text = flatten_content(msg.get("content"), TOOL_RESULT_LIMIT)
+        return [bool(text and failure_re.search(text))]
+    return None
+
+
 def detect(
     messages: list,
     headers: dict[str, str],
@@ -122,19 +142,22 @@ def detect(
 
     for i in range(start, n):
         msg = messages[i]
-        if not isinstance(msg, dict) or msg.get("role") != "user":
+        if not isinstance(msg, dict):
             continue
-        blocks = _tool_result_blocks(msg)
-        for block in blocks:
-            if _block_failed(block, failure_re):
-                consec += 1
-            else:
-                consec = 0
-        if not signal and consec >= cfg.consecutive_tool_failures:
-            signal = EscalationSignal("tool_failures", {"consecutive": consec})
-        # Retry text: only the final message, only if it's past the last
-        # escalation point, and only its plain-text (non-tool) content.
-        if i == n - 1 and not blocks and i >= scan.escalated_at_msg_count:
+        failures = _tool_result_failures(msg, failure_re)
+        if failures is not None:
+            for failed in failures:
+                consec = consec + 1 if failed else 0
+            if not signal and consec >= cfg.consecutive_tool_failures:
+                signal = EscalationSignal("tool_failures", {"consecutive": consec})
+        # Retry text: only the final message, only when it is a plain (non-tool)
+        # user message past the last escalation point.
+        if (
+            i == n - 1
+            and failures is None
+            and msg.get("role") == "user"
+            and i >= scan.escalated_at_msg_count
+        ):
             text = flatten_content(msg.get("content"), RETRY_TEXT_LIMIT)
             hit = _matches_retry(text, retry_res)
             if hit and not signal:

@@ -27,6 +27,7 @@ class DecisionEvent:
     latency_ms: int | None = None
     shadow: bool = False
     agent_id: str | None = None
+    client: str | None = None
     detail: dict[str, Any] = field(default_factory=dict)
     # Only set on `classified` events when raw-message capture is enabled.
     raw_first_message: str | None = None

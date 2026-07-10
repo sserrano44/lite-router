@@ -2,7 +2,7 @@
 
 This runbook describes a reference deployment: the LiteLLM proxy on a gateway
 host, the classifier on a GPU box next to Ollama. The virtual model is named
-`ripio-auto` here — rename it to whatever your clients request.
+`lite-auto` here — rename it to whatever your clients request.
 
 ## Components
 
@@ -22,7 +22,8 @@ host, the classifier on a GPU box next to Ollama. The virtual model is named
 
    | Var | Shadow launch | Notes |
    |---|---|---|
-   | `ROUTER_ENABLED` | `true` | `false` = full rollback: the virtual model becomes a plain Sonnet alias, zero routing, zero logging |
+   | `ROUTER_ENABLED` | `true` | `false` = full rollback: the virtual model becomes a plain alias for the default tier, zero routing, zero logging |
+   | `ROUTER_SESSION_HEADERS` | `x-claude-code-session-id,x-session-id` | session-id headers, priority order; clients that send none pin via content hash |
    | `SHADOW_MODE` | `true` | classify/pin/log everything, but always route the default model. Flip to `false` for Phase 2 |
    | `SUBAGENT_ROUTING_ENABLED` | `false` | R1b tier-below-parent routing; leave off until shadow data sizes the win |
    | `ROUTER_REDIS_URL` | `redis://<elasticache>:6379/0` | engine >= 6.2 preferred (GETEX); < 6.2 works via GET+EXPIRE fallback |
@@ -48,32 +49,70 @@ Health monitoring: poll `/healthz` from the gateway side -> alert. An outage
 is invisible to users (hook times out at 1s and pins the default model) but
 must be visible in Metabase: watch the `fallback` event rate.
 
-## Client setup (engineers, macOS)
+## Client setup
+
+### Claude Code (Anthropic `/v1/messages`)
 
 ```bash
 export ANTHROPIC_BASE_URL="https://<gateway-host>"
 export ANTHROPIC_AUTH_TOKEN="sk-<personal litellm key>"
-export ANTHROPIC_MODEL="ripio-auto"
-export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5"
+export ANTHROPIC_MODEL="lite-auto"
+# Claude Code's background/haiku calls must name a model in your model_list:
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-sonnet-5"
 ```
+
+Claude Code sends `x-claude-code-session-id`, so sessions pin on that header
+and get subagent-aware routing and system-prompt path overrides.
+
+### OpenCode (OpenAI-compatible `/chat/completions`)
+
+OpenCode connects as an OpenAI-compatible provider. Add to `opencode.json`
+(global `~/.config/opencode/opencode.json` or per-project):
+
+```json
+{
+  "provider": {
+    "litellm": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "lite-router",
+      "options": {
+        "baseURL": "https://<gateway-host>/v1",
+        "apiKey": "sk-<personal litellm key>"
+      },
+      "models": { "lite-auto": { "name": "lite-auto (session router)" } }
+    }
+  }
+}
+```
+
+OpenCode **cannot** send a per-conversation session-id header, so the router
+pins its sessions by the content-hash fallback (`sha256(key + system + first
+message)`). This is stable as long as OpenCode replays the same system prompt +
+first user message each turn — if it injects volatile content (timestamps,
+cwd) into the system prompt, sessions re-classify each turn (safe, but no pin
+persistence). Watch the `classified`-event rate per `client=opencode` to
+confirm pins hold. Path overrides for OpenCode use the `x-lite-tier` header
+(the system-prompt cwd auto-detection is Claude-Code-only).
 
 ## Escalation / override cheat sheet
 
 - Force a bigger model for one session: send header `x-router-escalate: true`
-  (one rung up, max 2 per session), or just pick a concrete model in the
-  client — explicit model names always bypass the router (logged as override).
-- Force-pin a repo to Opus: add a pattern to `path_overrides` in
-  `policies.yaml` via PR. As a client-side fallback the `x-ripio-tier:
-  hard_dev` header does the same per request source.
+  (one rung up, max 3 per session in the example ladder), or just pick a
+  concrete model in the client — explicit model names always bypass the router
+  (logged as override).
+- Force-pin a repo to the top-of-ladder tier: add a pattern to `path_overrides`
+  in `policies.yaml` via PR. As a client-side, any-client fallback the
+  `x-lite-tier: high` header does the same per request (use whatever tier name
+  `path_overrides.force_tier` is set to).
 
 ## Rollback
 
 | Symptom | Action |
 |---|---|
-| Anything router-related broken | `ROUTER_ENABLED=false`, restart proxy — virtual model = Sonnet alias |
+| Anything router-related broken | `ROUTER_ENABLED=false`, restart proxy — virtual model = default-tier alias |
 | Routing quality bad, keep data | `SHADOW_MODE=true`, restart proxy |
 | Classifier down | Nothing to do (fail-open); fix the GPU box, watch `fallback` rate |
-| Redis down | Sessions fail open to Sonnet; no restart needed |
+| Redis down | Sessions fail open to the default tier; no restart needed |
 
 ## Verifying a deploy
 
@@ -81,7 +120,7 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5"
 # 1. Routed request pins per classifier:
 curl -s $GW/v1/messages -H "Authorization: Bearer $KEY" \
   -H "x-claude-code-session-id: deploy-check-$RANDOM" \
-  -d '{"model":"ripio-auto","max_tokens":10,"messages":[{"role":"user","content":"what does ls -la do?"}]}'
+  -d '{"model":"lite-auto","max_tokens":10,"messages":[{"role":"user","content":"what does ls -la do?"}]}'
 # 2. Decision rows appear:
 psql -c "SELECT event_type, policy_name, model, shadow FROM router_decisions ORDER BY id DESC LIMIT 5"
 # 3. Tier distribution sane after some traffic:

@@ -14,7 +14,7 @@ import time
 
 from router_common.policies import PoliciesConfig, load_policies
 
-logger = logging.getLogger("ripio_router")
+logger = logging.getLogger("lite_router")
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -29,7 +29,17 @@ SHADOW_MODE = _env_bool("SHADOW_MODE", True)
 SUBAGENT_ROUTING_ENABLED = _env_bool("SUBAGENT_ROUTING_ENABLED", False)
 CAPTURE_FIRST_MESSAGES = _env_bool("ROUTER_CAPTURE_FIRST_MESSAGES", True)
 
-ROUTER_VIRTUAL_MODEL = os.environ.get("ROUTER_VIRTUAL_MODEL", "ripio-auto")
+ROUTER_VIRTUAL_MODEL = os.environ.get("ROUTER_VIRTUAL_MODEL", "lite-auto")
+# Session-id headers consulted in priority order (lowercased — extract_headers
+# lowercases keys). Default preserves Claude Code behavior and adds the generic
+# x-session-id any client/gateway can set.
+ROUTER_SESSION_HEADERS = tuple(
+    h.strip().lower()
+    for h in os.environ.get(
+        "ROUTER_SESSION_HEADERS", "x-claude-code-session-id,x-session-id"
+    ).split(",")
+    if h.strip()
+)
 ROUTER_REDIS_URL = os.environ.get("ROUTER_REDIS_URL", "redis://127.0.0.1:6379/0")
 ROUTER_CLASSIFIER_URL = os.environ.get("ROUTER_CLASSIFIER_URL", "http://127.0.0.1:8891")
 ROUTER_DATABASE_URL = os.environ.get("ROUTER_DATABASE_URL", "")

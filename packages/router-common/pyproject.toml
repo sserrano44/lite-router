@@ -1,7 +1,7 @@
 [project]
 name = "router-common"
 version = "0.1.0"
-description = "Shared policy models, hashing, and event types for the ripio-auto router"
+description = "Shared policy models, hashing, and event types for the lite-auto router"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.5",

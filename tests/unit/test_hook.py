@@ -6,7 +6,7 @@ from fakeredis import aioredis as fakeaioredis
 from router_common.events import EventType
 
 from session_router import config
-from session_router.hook import RipioAutoRouter
+from session_router.hook import LiteAutoRouter
 from session_router.session_store import SessionStore
 from session_router.state_machine import ClassifyResult
 
@@ -42,10 +42,10 @@ def make_router(classify_result=None):
     store._client = fakeaioredis.FakeRedis(decode_responses=True)
     classifier = FakeClassifier(classify_result)
     log = CapturingLog()
-    return RipioAutoRouter(store=store, classifier=classifier, decision_log=log)
+    return LiteAutoRouter(store=store, classifier=classifier, decision_log=log)
 
 
-def make_data(session_id="sess-1", message="add a login endpoint", system="", model="ripio-auto",
+def make_data(session_id="sess-1", message="add a login endpoint", system="", model="lite-auto",
               messages=None, extra_headers=None):
     headers = {}
     if session_id:
@@ -175,7 +175,7 @@ async def test_shadow_mode_routes_default_but_logs_tier(monkeypatch):
     data = make_data()
     out = await router.async_pre_call_hook(FakeAuth(), None, data, "anthropic_messages")
     assert out["model"] == "claude-sonnet-4-6"  # routed to default
-    stash = out["metadata"]["ripio_router"]
+    stash = out["metadata"]["lite_router"]
     assert stash["model"] == "claude-opus-4-8"  # decision preserved
     assert stash["shadow"] is True
     pinned = router.decision_log.by_type(EventType.PINNED)
@@ -220,7 +220,7 @@ async def test_derived_key_for_non_claude_code_clients():
     data = make_data(session_id=None)
     out = await router.async_pre_call_hook(FakeAuth(), None, data, "anthropic_messages")
     assert out["model"] == "claude-sonnet-4-6"
-    stash = out["metadata"]["ripio_router"]
+    stash = out["metadata"]["lite_router"]
     assert stash["key_source"] == "derived"
     # Same conversation replayed -> same session key -> no reclassification.
     await router.async_pre_call_hook(FakeAuth(), None, make_data(session_id=None),
@@ -233,5 +233,5 @@ async def test_metadata_stash_prefers_litellm_metadata():
     data = make_data()
     data["litellm_metadata"] = {"headers": {}}
     out = await router.async_pre_call_hook(FakeAuth(), None, data, "anthropic_messages")
-    assert "ripio_router" in out["litellm_metadata"]
+    assert "lite_router" in out["litellm_metadata"]
     assert "metadata" not in out

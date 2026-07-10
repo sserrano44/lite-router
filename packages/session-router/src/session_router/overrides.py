@@ -7,11 +7,14 @@ from dataclasses import dataclass
 
 from router_common.policies import PoliciesConfig
 
-TIER_HEADER = "x-ripio-tier"
+TIER_HEADER = "x-lite-tier"
 
 # Claude Code embeds an env block in its system prompt, e.g.
 #   Working directory: /home/user/capyfi
 # (historically also "Primary working directory:" / cwd lines).
+# This auto-detection is Claude-Code-specific — the hook only feeds it a
+# populated system prompt for that client. Every other client relies on the
+# universal x-lite-tier header (see match_path_override) for path overrides.
 _CWD_RE = re.compile(
     r"(?:working directory|cwd)\s*:\s*(?P<path>[^\n<]+)", re.IGNORECASE
 )
@@ -42,7 +45,7 @@ def match_path_override(
     """Return the matched pattern (or header marker), else None.
 
     Case-insensitive substring match of policy patterns against the working
-    directory and CLAUDE.md excerpt; the x-ripio-tier header is an explicit
+    directory and CLAUDE.md excerpt; the x-lite-tier header is an explicit
     per-repo fallback marker (R12b) that force-pins when it names the
     override tier.
     """

@@ -107,3 +107,81 @@ def test_first_user_message_skips_assistant():
         {"role": "user", "content": "question"},
     ]}
     assert sk.first_user_message_text(data) == "question"
+
+
+class TestSystemText:
+    def test_anthropic_top_level_string(self):
+        assert sk.system_text({"system": "you are helpful"}) == "you are helpful"
+
+    def test_anthropic_top_level_blocks(self):
+        data = {"system": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]}
+        assert sk.system_text(data) == "ab"
+
+    def test_openai_system_message_string(self):
+        data = {"messages": [
+            {"role": "system", "content": "openai sys"},
+            {"role": "user", "content": "hi"},
+        ]}
+        assert sk.system_text(data) == "openai sys"
+
+    def test_openai_system_message_parts(self):
+        data = {"messages": [
+            {"role": "system", "content": [{"type": "text", "text": "part1 "},
+                                            {"type": "text", "text": "part2"}]},
+            {"role": "user", "content": "hi"},
+        ]}
+        assert sk.system_text(data) == "part1 part2"
+
+    def test_top_level_wins_over_messages(self):
+        data = {"system": "top", "messages": [{"role": "system", "content": "msg"}]}
+        assert sk.system_text(data) == "top"
+
+    def test_first_system_message_only(self):
+        data = {"messages": [
+            {"role": "system", "content": "first"},
+            {"role": "system", "content": "second"},
+        ]}
+        assert sk.system_text(data) == "first"
+
+    def test_absent_is_empty(self):
+        assert sk.system_text({"messages": [{"role": "user", "content": "hi"}]}) == ""
+        assert sk.system_text({}) == ""
+
+
+class TestSessionIdFromHeaders:
+    def test_priority_order(self):
+        headers = {"x-claude-code-session-id": "cc", "x-session-id": "generic"}
+        assert sk.session_id_from_headers(headers) == "cc"
+
+    def test_generic_fallback(self):
+        assert sk.session_id_from_headers({"x-session-id": "generic"}) == "generic"
+
+    def test_none_present(self):
+        assert sk.session_id_from_headers({"user-agent": "x"}) == ""
+
+    def test_custom_header_list(self):
+        headers = {"x-my-session": "abc"}
+        assert sk.session_id_from_headers(headers, ("x-my-session",)) == "abc"
+
+    def test_whitespace_stripped_and_skipped(self):
+        headers = {"x-claude-code-session-id": "   ", "x-session-id": "real"}
+        assert sk.session_id_from_headers(headers) == "real"
+
+
+def test_derived_key_stable_across_openai_turns():
+    """OpenCode-style: no session header, system in messages[0]; the derived
+    key must be identical when the same opener is replayed on a later turn."""
+    turn1 = {"messages": [
+        {"role": "system", "content": "sys prompt"},
+        {"role": "user", "content": "add a login endpoint"},
+    ]}
+    turn2 = {"messages": [
+        {"role": "system", "content": "sys prompt"},
+        {"role": "user", "content": "add a login endpoint"},
+        {"role": "assistant", "content": "done"},
+        {"role": "user", "content": "now add tests"},
+    ]}
+    k1, s1 = sk.derive_session_key(turn1, {}, "alias")
+    k2, s2 = sk.derive_session_key(turn2, {}, "alias")
+    assert s1 == s2 == "derived"
+    assert k1 == k2

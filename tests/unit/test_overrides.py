@@ -50,15 +50,15 @@ class TestMatchPathOverride:
     def test_tier_header_forces(self, policies):
         assert (
             overrides.match_path_override(
-                overrides.RepoHints(), {"x-ripio-tier": "hard_dev"}, policies
+                overrides.RepoHints(), {"x-lite-tier": "hard_dev"}, policies
             )
-            == "header:x-ripio-tier"
+            == "header:x-lite-tier"
         )
 
     def test_tier_header_other_value_ignored(self, policies):
         assert (
             overrides.match_path_override(
-                overrides.RepoHints(), {"x-ripio-tier": "standard_dev"}, policies
+                overrides.RepoHints(), {"x-lite-tier": "standard_dev"}, policies
             )
             is None
         )

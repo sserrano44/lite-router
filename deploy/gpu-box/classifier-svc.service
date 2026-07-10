@@ -2,7 +2,7 @@
 # Install: cp to ~/.config/systemd/user/ && systemctl --user daemon-reload
 #          systemctl --user enable --now classifier-svc
 [Unit]
-Description=ripio-auto classifier service (Ollama qwen3-coder)
+Description=lite-auto classifier service (Ollama qwen3-coder)
 After=ollama.service
 Wants=ollama.service
 

@@ -1,8 +1,9 @@
 """Deterministic mock classifier for integration tests.
 
-Keyword routing: "solidity" -> hard_dev, "what does"/"explain" -> quick_lookup,
-else standard_dev. POST /control adjusts delay/failure at runtime; GET /stats
-exposes the call count so tests can assert the classifier was (not) called.
+Keyword routing: "solidity" -> high, "what does"/"explain" -> quick_lookup,
+"ultra"/"think hard" -> ultra-think, else standard_dev. POST /control adjusts
+delay/failure at runtime; GET /stats exposes the call count so tests can assert
+the classifier was (not) called.
 """
 
 from __future__ import annotations
@@ -15,9 +16,10 @@ from pydantic import BaseModel
 app = FastAPI(title="mock-classifier")
 
 MODELS = {
-    "quick_lookup": "claude-haiku-4-5",
-    "standard_dev": "claude-sonnet-4-6",
-    "hard_dev": "claude-opus-4-8",
+    "quick_lookup": "claude-sonnet-5",
+    "standard_dev": "grok-4.5",
+    "high": "claude-opus-4-8",
+    "ultra-think": "claude-fable-5",
 }
 
 state = {"calls": 0, "delay_ms": 0, "fail": False}
@@ -44,7 +46,9 @@ async def classify(req: ClassifyRequest, response: Response):
         return {"error": "induced failure"}
     text = req.first_message.lower()
     if "solidity" in text:
-        policy = "hard_dev"
+        policy = "high"
+    elif "ultra" in text or "think hard" in text:
+        policy = "ultra-think"
     elif "what does" in text or text.startswith("explain"):
         policy = "quick_lookup"
     else:

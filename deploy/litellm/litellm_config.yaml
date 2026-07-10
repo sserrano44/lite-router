@@ -1,37 +1,51 @@
-# Production-shaped LiteLLM config for the ripio-auto session router.
+# Production-shaped LiteLLM config for the lite-auto session router.
 # Deploy next to custom_callbacks.py and policies.yaml (see deploy/RUNBOOK.md).
+#
+# The model_list is the ONE place a provider is named — the router only ever
+# emits bare model ids from policies.yaml, and LiteLLM resolves each to a
+# deployment here. Swap providers (open-weight via ollama/, other clouds, etc.)
+# by editing these entries; policies.yaml stays provider-neutral.
 model_list:
   # Virtual model: keeps auth/model checks happy and doubles as the plain
   # alias when ROUTER_ENABLED=false (hook returns None -> this deployment).
-  - model_name: ripio-auto
+  # Maps to the default tier (standard_dev) so a disabled router degrades there.
+  - model_name: lite-auto
     litellm_params:
-      model: anthropic/claude-sonnet-4-6
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: xai/grok-4.5
+      api_key: os.environ/XAI_API_KEY
 
-  - model_name: claude-haiku-4-5
+  - model_name: claude-sonnet-5
     litellm_params:
-      model: anthropic/claude-haiku-4-5
+      model: anthropic/claude-sonnet-5
       api_key: os.environ/ANTHROPIC_API_KEY
-  - model_name: claude-sonnet-4-6
+  - model_name: grok-4.5
     litellm_params:
-      model: anthropic/claude-sonnet-4-6
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: xai/grok-4.5
+      api_key: os.environ/XAI_API_KEY
   - model_name: claude-opus-4-8
     litellm_params:
       model: anthropic/claude-opus-4-8
       api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: claude-fable-5
+    litellm_params:
+      model: anthropic/claude-fable-5
+      api_key: os.environ/ANTHROPIC_API_KEY
 
 litellm_settings:
   callbacks: custom_callbacks.proxy_handler_instance
+  # Silently drop params a backend rejects — e.g. OpenCode's reasoningSummary
+  # on models that don't support it.
+  drop_params: true
 
 router_settings:
   num_retries: 2
   # IMPORTANT: fallbacks must never go DOWN a tier — a rewritten model behaves
-  # like a client-sent group, so a haiku fallback on the opus group would
+  # like a client-sent group, so a cheaper fallback on a dearer group would
   # silently violate the router's no-downgrade invariant.
   fallbacks:
-    - claude-haiku-4-5: ["claude-sonnet-4-6"]
-    - claude-sonnet-4-6: ["claude-opus-4-8"]
+    - claude-sonnet-5: ["grok-4.5"]
+    - grok-4.5: ["claude-opus-4-8"]
+    - claude-opus-4-8: ["claude-fable-5"]
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

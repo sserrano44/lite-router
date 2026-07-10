@@ -1,50 +1,45 @@
+# Frozen 3-tier policy used ONLY by the unit tests, so the shipped example
+# policies.yaml (repo root) can evolve without churning test assertions.
+# Unit tests assert on these exact tier names and model ids.
 version: 1
 
-# --- Example provider-agnostic ladder -------------------------------------
-# Tier -> model is a bare model id; the LiteLLM model_list (deploy/litellm/
-# litellm_config.yaml) binds each id to a provider deployment. Mix providers
-# freely: this example spans Anthropic and xAI, and any tier could just as
-# easily point at an open-weight model served by Ollama/vLLM/llama.cpp.
-default_model: grok-4.5          # standard_dev tier — the fail-open default
+default_model: claude-sonnet-4-6
 
 # Ordered cheapest -> most capable. Escalation moves one entry down the list.
 tiers:
   - name: quick_lookup
-    model: claude-sonnet-5
+    model: claude-haiku-4-5
     description: >
       Single-question lookups, explain-this-snippet, small shell/one-liner help,
       formatting, commit messages, simple regex.
   - name: standard_dev
-    model: grok-4.5
+    model: claude-sonnet-4-6
     description: >
       Boilerplate, CRUD endpoints, unit tests, docs, single-file changes,
       straightforward bug fixes, dependency bumps, config changes.
-  - name: high
+  - name: hard_dev
     model: claude-opus-4-8
     description: >
       Architecture decisions, multi-file refactors, debugging non-obvious failures,
-      concurrency/perf work, security-sensitive changes, large migrations.
-  - name: ultra-think
-    model: claude-fable-5
-    description: >
-      The hardest problems: deep multi-system reasoning, subtle concurrency or
-      correctness bugs, novel algorithm design, high-stakes one-shot changes.
+      concurrency/perf work, smart-contract or reserve-accounting logic,
+      security-sensitive changes, large migrations.
 
 path_overrides:
   # Sessions whose repo hints match any pattern skip classification and
-  # force-pin this tier. Never eligible for downgrade. Rename/replace these
-  # patterns for your own high-stakes repos.
-  force_tier: high
+  # force-pin this tier. Never eligible for downgrade.
+  force_tier: hard_dev
   patterns:
+    - "capyfi"            # DeFi protocol
     - "contracts"         # any smart-contract repo
     - "solidity"
     - "bridge"            # cross-chain bridges
-    - "reserves"          # issuance / reserve accounting
+    - "wfiat-core"        # issuance / reserve accounting
+    - "reserves"
     - "custody"
     - "signer"            # key management / signing services
 
 escalation:
-  max_escalations: 3      # 3 hops across the 4-tier ladder
+  max_escalations: 2
   # Matched (case-insensitive) against the final user message; ^-anchored
   # patterns use re.match on the stripped text.
   retry_patterns:
@@ -53,8 +48,7 @@ escalation:
     - "that's wrong"
     - "try again"
     - "^no[,. ]"
-  # Matched against tool-result content (Anthropic tool_result blocks or an
-  # OpenAI role=tool message), truncated to 2k chars.
+  # Matched against tool_result content (truncated to 2k chars per block).
   failure_markers:
     - "FAILED"
     - "Traceback \\(most recent call last\\)"
@@ -67,9 +61,7 @@ session:
   redis_key_prefix: "router:session:"
 
 # Per-Mtok USD, used only by scripts/replay_shadow.py spend projection.
-# Replace with your providers' real per-token prices.
 pricing:
-  claude-sonnet-5: { in: 3.0, out: 15.0 }
-  grok-4.5: { in: 3.0, out: 15.0 }
+  claude-haiku-4-5: { in: 1.0, out: 5.0 }
+  claude-sonnet-4-6: { in: 3.0, out: 15.0 }
   claude-opus-4-8: { in: 15.0, out: 75.0 }
-  claude-fable-5: { in: 15.0, out: 75.0 }

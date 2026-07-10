@@ -146,6 +146,66 @@ class TestWatermark:
         assert signal is None
 
 
+def _oai_tool(text):
+    """OpenAI-shape tool result: a role=tool message with string content."""
+    return {"role": "tool", "tool_call_id": "t", "content": text}
+
+
+def _oai_assistant_toolcall():
+    return {"role": "assistant", "content": None,
+            "tool_calls": [{"id": "t", "type": "function",
+                            "function": {"name": "bash", "arguments": "{}"}}]}
+
+
+class TestOpenAIShape:
+    def test_two_consecutive_tool_failures(self, policies):
+        msgs = [
+            {"role": "system", "content": "sys"},
+            _user("run tests"),
+            _oai_assistant_toolcall(),
+            _oai_tool("FAILED tests/test_x.py"),
+            _oai_assistant_toolcall(),
+            _oai_tool("Traceback (most recent call last):\n  ..."),
+        ]
+        signal, state = detect(msgs, policies=policies)
+        assert signal and signal.reason == "tool_failures"
+        assert state.consec_failures == 2
+
+    def test_failure_success_failure_no_signal(self, policies):
+        msgs = [
+            _oai_tool("FAILED x"), _oai_assistant_toolcall(),
+            _oai_tool("all good"), _oai_assistant_toolcall(),
+            _oai_tool("error TS2345: nope"),
+        ]
+        signal, state = detect(msgs, policies=policies)
+        assert signal is None
+        assert state.consec_failures == 1
+
+    def test_retry_text_on_final_user_message(self, policies):
+        msgs = [
+            {"role": "system", "content": "sys"},
+            _user("build it"),
+            _oai_assistant_toolcall(),
+            _oai_tool("ok"),
+            _user("that's wrong, try again"),
+        ]
+        signal, _ = detect(msgs, policies=policies)
+        assert signal and signal.reason == "retry_text"
+
+    def test_tool_result_not_read_as_retry(self, policies):
+        # A final role=tool message echoing retry-like text is not retry text.
+        signal, _ = detect([_oai_tool("try again later")], policies=policies)
+        assert signal is None
+
+    def test_watermark_no_refire(self, policies):
+        msgs = [_oai_tool("FAILED a"), _oai_tool("FAILED b")]
+        signal, state = detect(msgs, policies=policies)
+        assert signal is not None
+        signal2, state2 = detect(msgs, scan=state, policies=policies)
+        assert signal2 is None
+        assert state2.msg_count == 2
+
+
 def test_non_list_messages_safe(policies):
     signal, state = detect(None, policies=policies)  # type: ignore[arg-type]
     assert signal is None
