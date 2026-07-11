@@ -232,6 +232,40 @@ async def test_derived_key_for_non_claude_code_clients():
     assert router.classifier.calls == 1
 
 
+async def test_side_channel_routes_cheap_without_pinning():
+    # Title-generation side-channel shares the session id and arrives first.
+    router = make_router(ClassifyResult("high", "claude-opus-4-8", 0.9))
+    title = make_data(
+        system="You are a title generator. You output ONLY a thread title.",
+        message="Generate a title for this conversation: refactor payments",
+    )
+    out = await router.async_pre_call_hook(FakeAuth(), None, title, "anthropic_messages")
+    assert out["model"] == "claude-sonnet-5"  # cheapest tier, not classified/pinned
+    assert router.classifier.calls == 0
+    assert not router.decision_log.by_type(EventType.PINNED)
+
+    # The real conversation on the SAME session id now defines the tier.
+    real = make_data(system="You are a coding agent.",
+                     message="refactor the payments module across ledger + API")
+    out2 = await router.async_pre_call_hook(FakeAuth(), None, real, "anthropic_messages")
+    assert out2["model"] == "claude-opus-4-8"  # classifier: high
+    assert router.classifier.calls == 1
+    assert router.decision_log.by_type(EventType.PINNED)
+
+
+async def test_side_channel_does_not_disturb_existing_pin():
+    router = make_router(ClassifyResult("high", "claude-opus-4-8", 0.9))
+    # Real task pins first.
+    await router.async_pre_call_hook(FakeAuth(), None, make_data(), "anthropic_messages")
+    # A later title-gen must route cheap and leave the pin intact.
+    title = make_data(system="You are a title generator.", message="Generate a title")
+    out = await router.async_pre_call_hook(FakeAuth(), None, title, "anthropic_messages")
+    assert out["model"] == "claude-sonnet-5"
+    # Follow-up real request stays pinned to high.
+    out2 = await router.async_pre_call_hook(FakeAuth(), None, make_data(), "anthropic_messages")
+    assert out2["model"] == "claude-opus-4-8"
+
+
 async def test_metadata_stash_prefers_litellm_metadata():
     router = make_router(ClassifyResult("standard_dev", "grok-4.5", 0.7))
     data = make_data()

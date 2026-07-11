@@ -91,6 +91,16 @@ class LiteAutoRouter(CustomLogger):
 
         t0 = time.perf_counter()
         policies = config.policies_holder.get()
+
+        # Client housekeeping calls (title generation, summarization) ride the
+        # same session id as the real conversation and often arrive first. Route
+        # them to the cheapest tier WITHOUT classifying or pinning, so the user's
+        # actual task is what defines the session's tier.
+        if policies.is_side_channel(sk.system_text(data)):
+            data["model"] = policies.cheapest_tier().model
+            logger.debug("side-channel request routed cheap, not pinned")
+            return data
+
         api_key_alias = (
             getattr(user_api_key_dict, "key_alias", None)
             or getattr(user_api_key_dict, "user_id", None)

@@ -31,6 +31,17 @@ class SessionConfig(BaseModel):
     redis_key_prefix: str = "router:session:"
 
 
+class SideChannelConfig(BaseModel):
+    # A request whose system prompt contains any of these (case-insensitive)
+    # substrings is a client housekeeping call — title generation, conversation
+    # summarization, etc. — not the user's actual task. Such requests are routed
+    # to the cheapest tier and NEVER classify or pin the session, so the real
+    # conversation is what determines the pinned tier. (Agents like OpenCode and
+    # Claude Code fire these on a shared session id, which would otherwise pin
+    # the whole session to the trivial-task tier.)
+    system_patterns: list[str] = Field(default_factory=list)
+
+
 class ModelPricing(BaseModel):
     in_: float = Field(alias="in")
     out: float
@@ -45,6 +56,7 @@ class PoliciesConfig(BaseModel):
     path_overrides: PathOverrides = Field(default_factory=PathOverrides)
     escalation: EscalationConfig = Field(default_factory=EscalationConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
+    side_channels: SideChannelConfig = Field(default_factory=SideChannelConfig)
     pricing: dict[str, ModelPricing] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -81,6 +93,17 @@ class PoliciesConfig(BaseModel):
             if t.model == self.default_model:
                 return t
         return self.tiers[len(self.tiers) // 2]
+
+    def cheapest_tier(self) -> Tier:
+        """Cheapest tier — tiers are ordered cheapest -> most capable."""
+        return self.tiers[0]
+
+    def is_side_channel(self, system_text: str) -> bool:
+        """True if a request's system prompt marks it as client housekeeping."""
+        if not system_text:
+            return False
+        low = system_text.lower()
+        return any(p.lower() in low for p in self.side_channels.system_patterns)
 
 
 def load_policies(path: str | Path) -> PoliciesConfig:
