@@ -68,46 +68,46 @@ def live_mode(monkeypatch):
 
 
 async def test_first_request_pins_classifier_result():
-    router = make_router(ClassifyResult("quick_lookup", "claude-haiku-4-5", 0.9, 42))
+    router = make_router(ClassifyResult("quick_lookup", "claude-sonnet-5", 0.9, 42))
     data = make_data()
     out = await router.async_pre_call_hook(FakeAuth(), None, data, "anthropic_messages")
-    assert out["model"] == "claude-haiku-4-5"
+    assert out["model"] == "claude-sonnet-5"
     assert router.decision_log.by_type(EventType.CLASSIFIED)
     assert router.decision_log.by_type(EventType.PINNED)
 
 
 async def test_session_stickiness_no_second_classify():
-    router = make_router(ClassifyResult("quick_lookup", "claude-haiku-4-5", 0.9))
+    router = make_router(ClassifyResult("quick_lookup", "claude-sonnet-5", 0.9))
     for _ in range(3):
         data = make_data()
         out = await router.async_pre_call_hook(FakeAuth(), None, data, "anthropic_messages")
-        assert out["model"] == "claude-haiku-4-5"
+        assert out["model"] == "claude-sonnet-5"
     assert router.classifier.calls == 1
 
 
 async def test_path_override_skips_classifier():
-    router = make_router(ClassifyResult("quick_lookup", "claude-haiku-4-5", 0.9))
-    data = make_data(system="Working directory: /home/dev/capyfi\n")
+    router = make_router(ClassifyResult("quick_lookup", "claude-sonnet-5", 0.9))
+    data = make_data(system="Working directory: /home/dev/contracts\n")
     out = await router.async_pre_call_hook(FakeAuth(), None, data, "anthropic_messages")
     assert out["model"] == "claude-opus-4-8"
     assert router.classifier.calls == 0
     pinned = router.decision_log.by_type(EventType.PINNED)
-    assert pinned and pinned[0].detail["path_override"] == "capyfi"
+    assert pinned and pinned[0].detail["path_override"] == "contracts"
 
 
 async def test_classifier_down_pins_default():
     router = make_router(None)
     data = make_data()
     out = await router.async_pre_call_hook(FakeAuth(), None, data, "anthropic_messages")
-    assert out["model"] == "claude-sonnet-4-6"
+    assert out["model"] == "grok-4.5"
     fallback = router.decision_log.by_type(EventType.FALLBACK)
     assert fallback and fallback[0].detail["reason"] == "classifier_unavailable"
 
 
 async def test_escalation_ratchet_and_cap():
-    router = make_router(ClassifyResult("quick_lookup", "claude-haiku-4-5", 0.9))
+    router = make_router(ClassifyResult("quick_lookup", "claude-sonnet-5", 0.9))
     out = await router.async_pre_call_hook(FakeAuth(), None, make_data(), "anthropic_messages")
-    assert out["model"] == "claude-haiku-4-5"
+    assert out["model"] == "claude-sonnet-5"
 
     def failing_history(n_failures, total):
         msgs = [{"role": "user", "content": "task"}]
@@ -120,21 +120,25 @@ async def test_escalation_ratchet_and_cap():
 
     out = await router.async_pre_call_hook(
         FakeAuth(), None, make_data(messages=failing_history(2, "a")), "anthropic_messages")
-    assert out["model"] == "claude-sonnet-4-6"
+    assert out["model"] == "grok-4.5"
 
     out = await router.async_pre_call_hook(
         FakeAuth(), None, make_data(messages=failing_history(4, "b")), "anthropic_messages")
     assert out["model"] == "claude-opus-4-8"
 
-    # Third escalation would exceed the ladder; stays pinned at opus.
     out = await router.async_pre_call_hook(
         FakeAuth(), None, make_data(messages=failing_history(6, "c")), "anthropic_messages")
-    assert out["model"] == "claude-opus-4-8"
-    assert len(router.decision_log.by_type(EventType.ESCALATED)) == 2
+    assert out["model"] == "claude-fable-5"
+
+    # Fourth escalation would exceed max_escalations; stays pinned at the top.
+    out = await router.async_pre_call_hook(
+        FakeAuth(), None, make_data(messages=failing_history(8, "d")), "anthropic_messages")
+    assert out["model"] == "claude-fable-5"
+    assert len(router.decision_log.by_type(EventType.ESCALATED)) == 3
 
 
 async def test_escalate_header():
-    router = make_router(ClassifyResult("standard_dev", "claude-sonnet-4-6", 0.8))
+    router = make_router(ClassifyResult("standard_dev", "grok-4.5", 0.8))
     await router.async_pre_call_hook(FakeAuth(), None, make_data(), "anthropic_messages")
     out = await router.async_pre_call_hook(
         FakeAuth(), None, make_data(extra_headers={"x-router-escalate": "true"}),
@@ -171,10 +175,10 @@ async def test_unroutable_call_type_ignored():
 
 async def test_shadow_mode_routes_default_but_logs_tier(monkeypatch):
     monkeypatch.setattr(config, "SHADOW_MODE", True)
-    router = make_router(ClassifyResult("hard_dev", "claude-opus-4-8", 0.95))
+    router = make_router(ClassifyResult("high", "claude-opus-4-8", 0.95))
     data = make_data()
     out = await router.async_pre_call_hook(FakeAuth(), None, data, "anthropic_messages")
-    assert out["model"] == "claude-sonnet-4-6"  # routed to default
+    assert out["model"] == "grok-4.5"  # routed to default
     stash = out["metadata"]["lite_router"]
     assert stash["model"] == "claude-opus-4-8"  # decision preserved
     assert stash["shadow"] is True
@@ -183,7 +187,7 @@ async def test_shadow_mode_routes_default_but_logs_tier(monkeypatch):
 
 
 async def test_redis_down_fails_open():
-    router = make_router(ClassifyResult("quick_lookup", "claude-haiku-4-5", 0.9))
+    router = make_router(ClassifyResult("quick_lookup", "claude-sonnet-5", 0.9))
 
     class Broken:
         def __getattr__(self, name):
@@ -193,7 +197,7 @@ async def test_redis_down_fails_open():
 
     router.store._client = Broken()
     out = await router.async_pre_call_hook(FakeAuth(), None, make_data(), "anthropic_messages")
-    assert out["model"] == "claude-sonnet-4-6"
+    assert out["model"] == "grok-4.5"
 
 
 async def test_internal_exception_fails_open():
@@ -204,22 +208,22 @@ async def test_internal_exception_fails_open():
 
     router.store.get_and_refresh = boom
     out = await router.async_pre_call_hook(FakeAuth(), None, make_data(), "anthropic_messages")
-    assert out["model"] == "claude-sonnet-4-6"
+    assert out["model"] == "grok-4.5"
 
 
 async def test_lost_claim_race_gets_default():
-    router = make_router(ClassifyResult("quick_lookup", "claude-haiku-4-5", 0.9))
+    router = make_router(ClassifyResult("quick_lookup", "claude-sonnet-5", 0.9))
     await router.store.claim_for_classification("sess-1", {"state": "classifying"})
     out = await router.async_pre_call_hook(FakeAuth(), None, make_data(), "anthropic_messages")
-    assert out["model"] == "claude-sonnet-4-6"
+    assert out["model"] == "grok-4.5"
     assert router.classifier.calls == 0
 
 
 async def test_derived_key_for_non_claude_code_clients():
-    router = make_router(ClassifyResult("standard_dev", "claude-sonnet-4-6", 0.7))
+    router = make_router(ClassifyResult("standard_dev", "grok-4.5", 0.7))
     data = make_data(session_id=None)
     out = await router.async_pre_call_hook(FakeAuth(), None, data, "anthropic_messages")
-    assert out["model"] == "claude-sonnet-4-6"
+    assert out["model"] == "grok-4.5"
     stash = out["metadata"]["lite_router"]
     assert stash["key_source"] == "derived"
     # Same conversation replayed -> same session key -> no reclassification.
@@ -229,7 +233,7 @@ async def test_derived_key_for_non_claude_code_clients():
 
 
 async def test_metadata_stash_prefers_litellm_metadata():
-    router = make_router(ClassifyResult("standard_dev", "claude-sonnet-4-6", 0.7))
+    router = make_router(ClassifyResult("standard_dev", "grok-4.5", 0.7))
     data = make_data()
     data["litellm_metadata"] = {"headers": {}}
     out = await router.async_pre_call_hook(FakeAuth(), None, data, "anthropic_messages")

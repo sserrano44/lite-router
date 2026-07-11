@@ -7,7 +7,7 @@ from session_router.decision_log import DecisionLog
 
 def _event(i=0):
     return DecisionEvent(
-        session_key=f"s{i}", event_type=EventType.PINNED, model="claude-sonnet-4-6"
+        session_key=f"s{i}", event_type=EventType.PINNED, model="grok-4.5"
     )
 
 

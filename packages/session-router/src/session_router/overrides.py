@@ -10,7 +10,7 @@ from router_common.policies import PoliciesConfig
 TIER_HEADER = "x-lite-tier"
 
 # Claude Code embeds an env block in its system prompt, e.g.
-#   Working directory: /home/user/capyfi
+#   Working directory: /home/user/contracts-app
 # (historically also "Primary working directory:" / cwd lines).
 # This auto-detection is Claude-Code-specific — the hook only feeds it a
 # populated system prompt for that client. Every other client relies on the

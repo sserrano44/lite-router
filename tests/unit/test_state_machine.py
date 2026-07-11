@@ -14,10 +14,10 @@ def _pin(policies, **kwargs):
 
 class TestBuildPinRecord:
     def test_classified(self, policies):
-        rec = _pin(policies, classify=sm.ClassifyResult("quick_lookup", "claude-haiku-4-5", 0.9))
+        rec = _pin(policies, classify=sm.ClassifyResult("quick_lookup", "claude-sonnet-5", 0.9))
         assert rec["state"] == sm.STATE_PINNED
         assert rec["policy_name"] == "quick_lookup"
-        assert rec["model"] == "claude-haiku-4-5"
+        assert rec["model"] == "claude-sonnet-5"
         assert rec["classified"] is True
         assert rec["confidence"] == 0.9
         assert rec["escalations"] == 0
@@ -25,10 +25,10 @@ class TestBuildPinRecord:
     def test_path_override_beats_classifier(self, policies):
         rec = _pin(
             policies,
-            classify=sm.ClassifyResult("quick_lookup", "claude-haiku-4-5", 0.9),
+            classify=sm.ClassifyResult("quick_lookup", "claude-sonnet-5", 0.9),
             path_override=True,
         )
-        assert rec["policy_name"] == "hard_dev"
+        assert rec["policy_name"] == "high"
         assert rec["model"] == "claude-opus-4-8"
         assert rec["path_override"] is True
         assert rec["classified"] is False
@@ -48,20 +48,23 @@ class TestBuildPinRecord:
 
 class TestEscalate:
     def test_ladder(self, policies):
-        rec = _pin(policies, classify=sm.ClassifyResult("quick_lookup", "claude-haiku-4-5", 0.9))
+        rec = _pin(policies, classify=sm.ClassifyResult("quick_lookup", "claude-sonnet-5", 0.9))
         rec = sm.escalate(rec, policies)
         assert rec["policy_name"] == "standard_dev" and rec["escalations"] == 1
         rec = sm.escalate(rec, policies)
-        assert rec["policy_name"] == "hard_dev" and rec["escalations"] == 2
+        assert rec["policy_name"] == "high" and rec["escalations"] == 2
+        rec = sm.escalate(rec, policies)
+        assert rec["policy_name"] == "ultra-think" and rec["escalations"] == 3
         assert sm.escalate(rec, policies) is None  # capped AND at top
 
     def test_cap_at_max_escalations(self, policies):
-        rec = _pin(policies, classify=sm.ClassifyResult("quick_lookup", "claude-haiku-4-5", 0.9))
+        rec = _pin(policies, classify=sm.ClassifyResult("quick_lookup", "claude-sonnet-5", 0.9))
         rec["escalations"] = policies.escalation.max_escalations
         assert sm.escalate(rec, policies) is None
 
     def test_top_tier_cannot_escalate(self, policies):
-        rec = _pin(policies, path_override=True)
+        top = policies.tiers[-1]
+        rec = _pin(policies, classify=sm.ClassifyResult(top.name, top.model, 1.0))
         assert sm.escalate(rec, policies) is None
 
     def test_classifying_placeholder_cannot_escalate(self, policies):
@@ -71,11 +74,11 @@ class TestEscalate:
         rec = _pin(policies)
         rec["policy_name"] = "removed_tier"
         out = sm.escalate(rec, policies)
-        assert out is not None and out["policy_name"] == "hard_dev"
+        assert out is not None and out["policy_name"] == "high"
 
 
 @given(st.lists(st.booleans(), max_size=10),
-       st.sampled_from(["quick_lookup", "standard_dev", "hard_dev"]))
+       st.sampled_from(["quick_lookup", "standard_dev", "high", "ultra-think"]))
 def test_tier_monotonic_non_decreasing(escalation_attempts, start_tier):
     """Property: no sequence of operations can ever lower a session's tier."""
     from pathlib import Path
@@ -83,7 +86,7 @@ def test_tier_monotonic_non_decreasing(escalation_attempts, start_tier):
     from router_common.policies import load_policies
 
     repo_root = Path(__file__).resolve().parent.parent.parent
-    policies = load_policies(repo_root / "tests" / "fixtures" / "policies.yaml")
+    policies = load_policies(repo_root / "policies.yaml")
     tier = policies.tier_by_name(start_tier)
     rec = sm.build_pin_record(
         policies, classify=sm.ClassifyResult(tier.name, tier.model, 1.0),
@@ -107,13 +110,13 @@ class TestSubagentTier:
         assert sm.subagent_tier(policies, parent).name == "quick_lookup"
 
     def test_floor_at_cheapest(self, policies):
-        parent = _pin(policies, classify=sm.ClassifyResult("quick_lookup", "claude-haiku-4-5", 1.0))
+        parent = _pin(policies, classify=sm.ClassifyResult("quick_lookup", "claude-sonnet-5", 1.0))
         assert sm.subagent_tier(policies, parent).name == "quick_lookup"
 
     def test_path_override_parent_keeps_tier(self, policies):
         parent = _pin(policies, path_override=True)
-        assert sm.subagent_tier(policies, parent).name == "hard_dev"
+        assert sm.subagent_tier(policies, parent).name == "high"
 
-    def test_hard_dev_classified_parent_goes_down(self, policies):
-        parent = _pin(policies, classify=sm.ClassifyResult("hard_dev", "claude-opus-4-8", 1.0))
+    def test_high_classified_parent_goes_down(self, policies):
+        parent = _pin(policies, classify=sm.ClassifyResult("high", "claude-opus-4-8", 1.0))
         assert sm.subagent_tier(policies, parent).name == "standard_dev"

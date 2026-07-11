@@ -15,7 +15,7 @@ class Tier(BaseModel):
 
 
 class PathOverrides(BaseModel):
-    force_tier: str = "hard_dev"
+    force_tier: str = "high"
     patterns: list[str] = Field(default_factory=list)
 
 

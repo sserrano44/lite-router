@@ -11,8 +11,9 @@ _EXAMPLES = [
     ("Add a POST /users endpoint with validation and a unit test.", "standard_dev"),
     ("Bump fastapi to 0.115 and fix any deprecation warnings.", "standard_dev"),
     ("Refactor the payments module to support multi-currency settlement; "
-     "it touches the ledger, the reconciliation job, and the public API.", "hard_dev"),
-    ("Our withdrawal queue deadlocks under load, sometimes. Find out why.", "hard_dev"),
+     "it touches the ledger, the reconciliation job, and the public API.", "high"),
+    ("Our request queue deadlocks under load, sometimes. Find out why.", "high"),
+    ("Design a lock-free concurrent hashmap and argue it's linearizable.", "ultra-think"),
 ]
 
 MAX_PROMPT_CHARS = 6000

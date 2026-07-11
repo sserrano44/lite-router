@@ -86,10 +86,10 @@ async def main() -> None:
     args = ap.parse_args()
 
     print(f"warming up connections against {args.url} ...")
-    await measure(args.url, "claude-sonnet-4-6", 5, 3, 5)
+    await measure(args.url, "grok-4.5", 5, 3, 5)
 
     print(f"\n== bypass path (concrete model, router skipped) ==")
-    bypass = await measure(args.url, "claude-sonnet-4-6", args.sessions, args.requests,
+    bypass = await measure(args.url, "grok-4.5", args.sessions, args.requests,
                            args.concurrency)
     b = stats("bypass", bypass)
 

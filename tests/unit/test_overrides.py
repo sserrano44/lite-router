@@ -3,24 +3,24 @@ from session_router import overrides
 
 SYSTEM = """You are Claude Code.
 <env>
-Working directory: /home/dev/capyfi-rewards
+Working directory: /home/dev/contracts-app
 Is a git repository: true
 </env>
 Contents of CLAUDE.md (project instructions):
 # CLAUDE.md
-This repo holds the rewards engine.
+This repo holds the settlement contracts.
 """
 
 
 class TestExtractRepoHints:
     def test_cwd(self):
         hints = overrides.extract_repo_hints(SYSTEM)
-        assert hints.cwd == "/home/dev/capyfi-rewards"
+        assert hints.cwd == "/home/dev/contracts-app"
 
     def test_claude_md_excerpt(self):
         hints = overrides.extract_repo_hints(SYSTEM)
         assert hints.claude_md_excerpt.startswith("CLAUDE.md")
-        assert "rewards engine" in hints.claude_md_excerpt
+        assert "settlement contracts" in hints.claude_md_excerpt
 
     def test_empty_system(self):
         hints = overrides.extract_repo_hints("")
@@ -29,8 +29,8 @@ class TestExtractRepoHints:
 
 class TestMatchPathOverride:
     def test_cwd_pattern_match(self, policies):
-        hints = overrides.RepoHints(cwd="/home/dev/capyfi-rewards")
-        assert overrides.match_path_override(hints, {}, policies) == "capyfi"
+        hints = overrides.RepoHints(cwd="/home/dev/contracts-app")
+        assert overrides.match_path_override(hints, {}, policies) == "contracts"
 
     def test_case_insensitive(self, policies):
         hints = overrides.RepoHints(cwd="/home/dev/Solidity-Playground")
@@ -50,7 +50,7 @@ class TestMatchPathOverride:
     def test_tier_header_forces(self, policies):
         assert (
             overrides.match_path_override(
-                overrides.RepoHints(), {"x-lite-tier": "hard_dev"}, policies
+                overrides.RepoHints(), {"x-lite-tier": "high"}, policies
             )
             == "header:x-lite-tier"
         )
