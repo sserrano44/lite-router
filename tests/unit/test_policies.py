@@ -8,6 +8,11 @@ class TestSideChannel:
             "You are a title generator. You output ONLY a thread title."
         )
 
+    def test_detects_file_search_subagent(self, policies):
+        assert policies.is_side_channel(
+            "You are a file search specialist. You excel at exploring codebases."
+        )
+
     def test_case_insensitive(self, policies):
         assert policies.is_side_channel("you ARE a Title Generator, etc")
 

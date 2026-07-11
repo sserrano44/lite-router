@@ -73,7 +73,8 @@ session:
 # pins. Add markers for whatever clients you run.
 side_channels:
   system_patterns:
-    - "you are a title generator"        # OpenCode thread-title side-channel
+    - "you are a title generator"          # OpenCode thread-title side-channel
+    - "you are a file search specialist"   # OpenCode file-search/explore subagent
 
 # Per-Mtok USD, used only by scripts/replay_shadow.py spend projection.
 # Replace with your providers' real per-token prices.
