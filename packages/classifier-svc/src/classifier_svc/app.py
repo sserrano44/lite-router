@@ -17,13 +17,13 @@ from fastapi import FastAPI, Response
 from pydantic import BaseModel, Field
 from router_common.policies import PoliciesConfig, load_policies
 
-from classifier_svc import ollama, prompt
+from classifier_svc import backend, prompt
 
 logger = logging.getLogger("classifier_svc")
 
 POLICIES_PATH = os.environ.get("ROUTER_POLICIES_PATH", "policies.yaml")
 RELOAD_WATCH_INTERVAL_S = 5.0
-WARMUP_TIMEOUT_S = float(os.environ.get("OLLAMA_WARMUP_TIMEOUT_S", "300"))
+WARMUP_TIMEOUT_S = float(os.environ.get("CLASSIFIER_WARMUP_TIMEOUT_S", "30"))
 
 
 class ClassifyRequest(BaseModel):
@@ -56,9 +56,9 @@ def _load_policies() -> None:
 
 
 async def _warmup() -> None:
-    """Fire one real classification so Ollama loads the model into VRAM;
-    healthz stays 503 until this succeeds."""
-    result = await ollama.chat_classify(
+    """Fire one real classification to confirm the gateway is reachable and
+    returns parseable JSON; healthz stays 503 until this succeeds."""
+    result = await backend.chat_classify(
         prompt.system_prompt(state.policies),
         prompt.user_prompt("warmup: explain this regex", "", {}),
         prompt.response_schema(state.policies),
@@ -97,7 +97,7 @@ async def lifespan(app: FastAPI):
     watcher = asyncio.create_task(_watch_policies())
     yield
     watcher.cancel()
-    await ollama.aclose()
+    await backend.aclose()
 
 
 app = FastAPI(title="lite-auto classifier-svc", lifespan=lifespan)
@@ -110,7 +110,7 @@ async def healthz(response: Response):
         return {"status": "warming_up"}
     return {
         "status": "ok",
-        "model": ollama.CLASSIFIER_MODEL,
+        "model": backend.CLASSIFIER_MODEL,
         "policies_version": state.policies.version,
         "uptime_s": int(time.time() - state.started_at),
     }
@@ -127,7 +127,7 @@ async def classify(req: ClassifyRequest):
     t0 = time.perf_counter()
     policies = state.policies
     default_tier = policies.default_tier()
-    result = await ollama.chat_classify(
+    result = await backend.chat_classify(
         prompt.system_prompt(policies),
         prompt.user_prompt(req.first_message, req.system_summary, req.repo_hints),
         prompt.response_schema(policies),
